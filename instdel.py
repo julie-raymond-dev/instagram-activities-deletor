@@ -10,7 +10,7 @@ import time
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchWindowException, TimeoutException
+from selenium.common.exceptions import NoSuchWindowException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -31,7 +31,7 @@ AT_ONCE_DELETE = 20
 logging.info("Starting...")
 try:
     # configure ChromeDriver to send logs to null
-    service = ChromeService(log_path=os.devnull)
+    service = ChromeService(executable_path='./chromedriver', log_path=os.devnull)
 
     options = Options()
     # suppress ChromeDriver “DevTools listening” & lower Chrome logs
@@ -147,19 +147,28 @@ try:
                         + " to load..."
                     )
                     time.sleep(2)
-                    for el in driver.find_elements(By.CSS_SELECTOR, 'span[data-bloks-name="bk.components.Text"]'):
-                        if el.text == "Select":
+                    for el in driver.find_elements(By.XPATH, "//span[text()='Sélectionner']"):
+                        try:
                             # check for no results
-                            if any(j.text == "No results" for j in driver.find_elements(By.CSS_SELECTOR, 'span[data-bloks-name="bk.components.Text"]')): 
-                                logging.info("No items found. DONE. Returning to menu")
-                                return  # Return to the menu, not quit
+                            try:
+                                if driver.find_elements(By.XPATH, "//span[text()='Aucun résultat']"):
+                                    logging.info("No items found. DONE. Returning to menu")
+                                    return  # Return to the menu, not quit
+                            except StaleElementReferenceException:
+                                pass
                             driver.execute_script("arguments[0].click();", el)
-                            logging.info("Clicked 'Select'")
+                            logging.info("Clicked 'Sélectionner'")
                             is_clicked_select = True
                             break
-                        if el.text.startswith("You haven't"):
+                        except StaleElementReferenceException:
+                            continue
+                    # Check for "You haven't"
+                    try:
+                        if driver.find_elements(By.XPATH, "//span[starts-with(text(),'Vous n')]"):
                             logging.info("No items found. Returning to menu")
                             return  # Return to the menu, not quit
+                    except StaleElementReferenceException:
+                        pass
 
                 # 2) Select up to AT_ONCE_DELETE items
                 selected_count = 0
@@ -180,14 +189,16 @@ try:
 
                 # 3) Click Delete/Unlike
                 delete_clicked = False
-                delete_text = "Delete" if MODE in (1, 3, 4) else "Unlike"
-                for span in driver.find_elements(By.CSS_SELECTOR, 'span[data-bloks-name="bk.components.TextSpan"]'):
-                    if span.text == delete_text:
+                delete_text = "Supprimer" if MODE in (1, 3, 4) else "Ne plus aimer"
+                for span in driver.find_elements(By.XPATH, f"//span[text()='{delete_text}']"):
+                    try:
                         time.sleep(1)
                         driver.execute_script("arguments[0].click();", span)
                         logging.info(f"Clicked '{delete_text}'")
                         delete_clicked = True
                         break
+                    except StaleElementReferenceException:
+                        continue
 
                 if not delete_clicked:
                     logging.warning("Delete/Remove button not found. Refreshing the page and retrying...")
@@ -203,18 +214,21 @@ try:
                             btn_text = btn.find_element(By.CSS_SELECTOR, "div").text
                         except:
                             continue
-                        if btn_text == delete_text:
-                            driver.execute_script("arguments[0].click();", btn)
-                            logging.info(f"Confirmed '{delete_text}'")
-                            is_clicked_confirmation = True
-                            break
-                        elif btn_text == "OK":
-                            driver.execute_script("arguments[0].click();", btn)
-                            logging.warning("Rate limit hit. Clicked 'OK'. Refreshing...")
-                            driver.refresh()
-                            time.sleep(2)
-                            is_clicked_confirmation = True
-                            break
+                        try:
+                            if btn_text == delete_text:
+                                driver.execute_script("arguments[0].click();", btn)
+                                logging.info(f"Confirmed '{delete_text}'")
+                                is_clicked_confirmation = True
+                                break
+                            elif btn_text == "OK":
+                                driver.execute_script("arguments[0].click();", btn)
+                                logging.warning("Rate limit hit. Clicked 'OK'. Refreshing...")
+                                driver.refresh()
+                                time.sleep(2)
+                                is_clicked_confirmation = True
+                                break
+                        except StaleElementReferenceException:
+                            continue
 
         # Start deletion process
         start_deletion()
